@@ -1,5 +1,9 @@
-namespace PdfStreamingWatermarker;
+namespace PdfStreamingWatermarker.Infrastructure;
 
+/// <summary>
+/// Provides an adapter to bridge synchronous PDF writing with asynchronous stream operations.
+/// Used by iText7's PdfWriter to write to ASP.NET Core's response stream asynchronously.
+/// </summary>
 public class AsyncOutputStream : Stream
 {
     private readonly Stream _outputStream;
@@ -42,4 +46,4 @@ public class AsyncOutputStream : Stream
     {
         await _outputStream.WriteAsync(buffer, offset, count, cancellationToken);
     }
-}
+} 
