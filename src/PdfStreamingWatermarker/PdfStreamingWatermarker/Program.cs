@@ -8,6 +8,7 @@ using iText.IO.Font.Constants;
 using iText.Kernel.Colors;
 using iText.Kernel.Pdf.Extgstate;
 using PdfStreamingWatermarker;
+using PdfStreamingWatermarker.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +16,10 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpClient<IFileService, ApiFileService>(client =>
+{
+    client.BaseAddress = new Uri("http://localhost:5194"); // Use your API base URL
+});
 
 var app = builder.Build();
 
@@ -29,111 +34,115 @@ if (app.Environment.IsDevelopment())
 app.UseStaticFiles();
 app.UseHttpsRedirection();
 
-// Add new PDF streaming endpoint
-app.MapGet("/pdf/{filename}", async (string filename, HttpResponse response) =>
+// Base PDF endpoint - streaming version
+app.MapMethods("/pdf/{filename}", new[] { "GET", "HEAD" }, async (string filename, HttpRequest request, HttpResponse response) =>
 {
     var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", filename);
     
     if (!File.Exists(filePath))
     {
-        return Results.NotFound($"PDF file '{filename}' not found.");
+        return Results.NotFound($"PDF file '{filename}' not found. Looked in: {filePath}");
     }
 
     response.Headers.Append("Content-Disposition", $"inline; filename={filename}");
     response.ContentType = "application/pdf";
     
-    await using var stream = File.OpenRead(filePath);
-    await stream.CopyToAsync(response.Body);
+    // Only send the file content for GET requests
+    if (request.Method == "GET")
+    {
+        const int bufferSize = 8192; // 8KB buffer
+        await using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, true);
+        await fileStream.CopyToAsync(response.Body);
+    }
     
     return Results.Empty;
-})
-    .WithName("GetPdf")
-    .WithOpenApi();
+});
 
-app.MapGet("/pdf/{filename}/watermark", async (string filename, string watermarkText, HttpResponse response, CancellationToken cancellationToken) =>
+// Watermark endpoint - streaming version
+app.MapGet("/pdf/{filename}/watermark", async (
+    string filename, 
+    string watermarkText, 
+    IFileService fileService,
+    HttpResponse response, 
+    CancellationToken cancellationToken) =>
 {
-    var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", filename);
-    
-    if (!File.Exists(filePath))
+    if (!await fileService.FileExistsAsync(filename, cancellationToken))
     {
         return Results.NotFound($"PDF file '{filename}' not found.");
+    }
+
+    var sourceStream = await fileService.GetFileStreamAsync(filename, cancellationToken);
+    if (sourceStream == null)
+    {
+        return Results.NotFound($"PDF file '{filename}' could not be retrieved.");
     }
 
     response.Headers.Append("Content-Disposition", $"inline; filename=watermarked_{filename}");
     response.ContentType = "application/pdf";
 
     var writerProperties = new WriterProperties()
-        .SetFullCompressionMode(false)
+        .SetCompressionLevel(0) // Disable compression to reduce memory usage
         .UseSmartMode();
 
     var asyncOutputStream = new AsyncOutputStream(response.Body);
 
-    await using var sourceStream = File.OpenRead(filePath);
     using var pdfReader = new PdfReader(sourceStream);
     await using var pdfWriter = new PdfWriter(asyncOutputStream, writerProperties);
     using var pdfDocument = new PdfDocument(pdfReader, pdfWriter);
-    using var document = new Document(pdfDocument);
-
+    
+    // Configure document for streaming
     pdfDocument.SetCloseWriter(false);
     pdfDocument.SetFlushUnusedObjects(true);
 
-    var numberOfPages = pdfDocument.GetNumberOfPages();
+    // Create resources once
     var font = PdfFontFactory.CreateFont(StandardFonts.HELVETICA);
+    var gState = new PdfExtGState().SetFillOpacity(0.3f);
+    var watermark = new Paragraph(watermarkText)
+        .SetFont(font)
+        .SetFontSize(60)
+        .SetFontColor(ColorConstants.LIGHT_GRAY);
 
+    // Process pages one at a time
+    var numberOfPages = pdfDocument.GetNumberOfPages();
     for (var i = 1; i <= numberOfPages; i++)
     {
         var page = pdfDocument.GetPage(i);
         var pageSize = page.GetPageSize();
         var canvas = new PdfCanvas(page);
 
-        // Create a new content stream for the watermark
+        // Add watermark
         canvas.SaveState();
-
-        // Set transparency
-        var gState = new PdfExtGState().SetFillOpacity(0.3f);
         canvas.SetExtGState(gState);
 
-        // Create the watermark text
-        var watermark = new Paragraph(watermarkText)
-            .SetFont(font)
-            .SetFontSize(60)
-            .SetFontColor(ColorConstants.LIGHT_GRAY);
-
-        // Calculate center position
         var centerX = pageSize.GetWidth() / 2;
         var centerY = pageSize.GetHeight() / 2;
 
-        // Create the layout canvas
         var layoutCanvas = new Canvas(canvas, pageSize);
-        
-        // Position and rotate the watermark
-        layoutCanvas
-            .ShowTextAligned(watermark, 
-                centerX, 
-                centerY, 
-                i, 
-                TextAlignment.CENTER, 
-                VerticalAlignment.MIDDLE, 
-                (float)(Math.PI / 6));
+        layoutCanvas.ShowTextAligned(watermark, 
+            centerX, 
+            centerY, 
+            i, 
+            TextAlignment.CENTER, 
+            VerticalAlignment.MIDDLE, 
+            (float)(Math.PI / 6));
 
-        // Cleanup
         layoutCanvas.Close();
         canvas.RestoreState();
         canvas.Release();
-        
-        // Flush the page
-        page.Flush();
 
-        if (i % 10 != 0) continue;
-        pdfWriter.Flush();
-        await asyncOutputStream.FlushAsync(cancellationToken);
+        // Flush writer periodically instead of every page
+        if (i % 10 == 0 || i == numberOfPages)
+        {
+            pdfWriter.Flush();
+            await asyncOutputStream.FlushAsync(cancellationToken);
+        }
     }
 
-    document.Close();
+    // Cleanup
+    pdfDocument.Close();
+    await asyncOutputStream.FlushAsync(cancellationToken);
     
     return Results.Empty;
-})
-    .WithName("GetWatermarkedPdf")
-    .WithOpenApi();
+});
 
 app.Run();
