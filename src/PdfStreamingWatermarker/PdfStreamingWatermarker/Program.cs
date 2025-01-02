@@ -28,6 +28,19 @@ else
 // Add service registration
 builder.Services.AddScoped<IPdfWatermarkService, PdfWatermarkService>();
 
+// Add after builder creation
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
+// Configure logging levels
+builder.Services.Configure<LoggerFilterOptions>(options =>
+{
+    options.AddFilter("PdfStreamingWatermarker.Services", LogLevel.Debug);
+    options.AddFilter("Microsoft", LogLevel.Warning);
+    options.AddFilter("System", LogLevel.Warning);
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

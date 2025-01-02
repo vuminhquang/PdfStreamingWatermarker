@@ -1,4 +1,5 @@
 using Azure.Storage.Blobs;
+using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -16,6 +17,9 @@ var host = new HostBuilder()
         // Register services
         services.AddScoped<IFileService, AzureBlobFileService>();
         services.AddScoped<IPdfWatermarkService, PdfWatermarkService>();
+        
+        // Add Queue Service
+        services.AddSingleton(new QueueServiceClient(connectionString));
     })
     .Build();
 

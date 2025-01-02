@@ -26,39 +26,46 @@ public class PdfWatermarkService : IPdfWatermarkService
         string watermarkText, 
         CancellationToken cancellationToken)
     {
-        var writerProperties = new WriterProperties()
-            .SetCompressionLevel(0) // Disable compression to reduce memory usage
-            .UseSmartMode();
-
-        var asyncOutputStream = new AsyncOutputStream(outputStream);
-
-        using var pdfReader = new PdfReader(sourceStream);
-        await using var pdfWriter = new PdfWriter(asyncOutputStream, writerProperties);
-        using var pdfDocument = new PdfDocument(pdfReader, pdfWriter);
-        
-        // Configure document for streaming
-        pdfDocument.SetCloseWriter(false);
-        pdfDocument.SetFlushUnusedObjects(true);
-
-        // Create resources once
-        var font = PdfFontFactory.CreateFont(StandardFonts.HELVETICA);
-        var gState = new PdfExtGState().SetFillOpacity(0.3f);
-        var watermark = new Paragraph(watermarkText)
-            .SetFont(font)
-            .SetFontSize(60)
-            .SetFontColor(ColorConstants.LIGHT_GRAY);
+        using var scope = _logger.BeginScope("Watermarking PDF with text: {WatermarkText}", watermarkText);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
-            // Process pages one at a time
+            var writerProperties = new WriterProperties()
+                .SetCompressionLevel(0)
+                .UseSmartMode();
+
+            var asyncOutputStream = new AsyncOutputStream(outputStream);
+
+            using var pdfReader = new PdfReader(sourceStream);
+            await using var pdfWriter = new PdfWriter(asyncOutputStream, writerProperties);
+            using var pdfDocument = new PdfDocument(pdfReader, pdfWriter);
+            
+            _logger.LogInformation("PDF opened. Total pages: {PageCount}", pdfDocument.GetNumberOfPages());
+            
+            // Configure document for streaming
+            pdfDocument.SetCloseWriter(false);
+            pdfDocument.SetFlushUnusedObjects(true);
+
+            // Create resources once
+            var font = PdfFontFactory.CreateFont(StandardFonts.HELVETICA);
+            var gState = new PdfExtGState().SetFillOpacity(0.3f);
+            var watermark = new Paragraph(watermarkText)
+                .SetFont(font)
+                .SetFontSize(60)
+                .SetFontColor(ColorConstants.LIGHT_GRAY);
+
+            var pageStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var numberOfPages = pdfDocument.GetNumberOfPages();
+
             for (var i = 1; i <= numberOfPages; i++)
             {
+                var pageStart = pageStopwatch.ElapsedMilliseconds;
+                
                 var page = pdfDocument.GetPage(i);
                 var pageSize = page.GetPageSize();
                 var canvas = new PdfCanvas(page);
 
-                // Add watermark
                 canvas.SaveState();
                 canvas.SetExtGState(gState);
 
@@ -78,21 +85,41 @@ public class PdfWatermarkService : IPdfWatermarkService
                 canvas.RestoreState();
                 canvas.Release();
 
-                // Flush writer periodically instead of every page
                 if (i % 10 == 0 || i == numberOfPages)
                 {
                     pdfWriter.Flush();
                     await asyncOutputStream.FlushAsync(cancellationToken);
+                    _logger.LogInformation(
+                        "Processed {PageCount}/{TotalPages} pages. Last batch took {BatchTime}ms", 
+                        i, 
+                        numberOfPages,
+                        pageStopwatch.ElapsedMilliseconds);
+                    pageStopwatch.Restart();
                 }
+
+                _logger.LogDebug(
+                    "Page {PageNumber}/{TotalPages} processed in {PageTime}ms", 
+                    i, 
+                    numberOfPages,
+                    pageStopwatch.ElapsedMilliseconds - pageStart);
             }
 
-            // Cleanup
             pdfDocument.Close();
             await asyncOutputStream.FlushAsync(cancellationToken);
+
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "PDF watermarking completed. Total time: {TotalTime}ms for {PageCount} pages", 
+                stopwatch.ElapsedMilliseconds,
+                numberOfPages);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error watermarking PDF");
+            stopwatch.Stop();
+            _logger.LogError(
+                ex,
+                "Error watermarking PDF after {ElapsedTime}ms",
+                stopwatch.ElapsedMilliseconds);
             throw;
         }
     }

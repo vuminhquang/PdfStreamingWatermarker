@@ -57,4 +57,20 @@ public class AzureBlobFileService : IFileService
             return false;
         }
     }
+
+    public async Task<Stream> CreateFileStreamAsync(string filename, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+            var blobClient = containerClient.GetBlobClient(filename);
+
+            return await blobClient.OpenWriteAsync(true, cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating blob stream for {Filename}", filename);
+            throw;
+        }
+    }
 } 
