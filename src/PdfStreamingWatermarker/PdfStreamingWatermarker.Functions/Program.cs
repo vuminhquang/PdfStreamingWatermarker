@@ -17,9 +17,6 @@ var host = new HostBuilder()
         // Register services
         services.AddScoped<IFileService, AzureBlobFileService>();
         services.AddScoped<IPdfWatermarkService, PdfWatermarkService>();
-        
-        // Add Queue Service
-        services.AddSingleton(new QueueServiceClient(connectionString));
     })
     .Build();
 

@@ -60,9 +60,11 @@ az functionapp config appsettings set `
     "AzureStorage:ConnectionString=$storageConnectionString" `
     "AzureStorage:ContainerName=$containerName" `
     "WEBSITE_RUN_FROM_PACKAGE=1" `
-    "FUNCTIONS_WORKER_PROCESS_COUNT=8" `
-    "WEBSITE_MAX_DYNAMIC_APPLICATION_SCALE_OUT=10" `
-    "WEBSITE_WARMUP_PATH=/api/WatermarkPdf?warmup=true"
+    "FUNCTIONS_WORKER_PROCESS_COUNT=4" `
+    "WEBSITE_MAX_DYNAMIC_APPLICATION_SCALE_OUT=20" `
+    "FUNCTIONS_WORKER_RUNTIME=dotnet-isolated" `
+    "WEBSITE_WARMUP_PATH=/api/WatermarkPdf?warmup=true" `
+    "FUNCTIONS_EXTENSION_VERSION=~4"
 
 # Build and Publish Function App
 Write-Host "Building and Publishing Function App..." -ForegroundColor Yellow
